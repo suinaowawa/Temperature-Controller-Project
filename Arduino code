@@ -1,0 +1,313 @@
+#include <LiquidCrystal.h> //include LCD1602 library
+#include<math.h>//include math library
+double sensorValue; //analogRead value of sensor circuit pin
+double CT; //current temperature
+double DT; //desired temperature
+int A; //temperature difference between CT and DT
+int B;// temperature difference between DT and CT
+int C;// temperature difference between DT and 25°C
+int D;//pwm output for h-bridge due to (DT-25)
+int E; //pwm output for h-bridge due to (DT-25)
+int F;
+int lastkey = 0;    //which key was pressed last cycle
+unsigned long t0; //how long has key been held for
+#define KEYPIN A0//pin for buttons
+//button constants
+#define btnRIGHT  6
+#define btnUP     5
+#define btnDOWN   4
+#define btnLEFT   3
+#define btnSELECT 2
+#define btnNONE   (-1)
+LiquidCrystal lcd1602(8, 9, 4, 5, 6, 7);//initialize LCD pins
+void setup() {
+	Serial.begin(9600);
+	pinMode(3, OUTPUT);//cool pin D3
+	pinMode(11, OUTPUT);//heat pin D11
+	lcd1602.begin(16, 2);//initialize LCD screen 
+}
+
+//function for read buttons analog values 
+int read_LCD_buttons() {
+	int adc_key_in = 0;
+	adc_key_in = analogRead(KEYPIN);      // read the value from the sensor 
+	delay(5); //switch debounce delay. Increase this delay if incorrect switch selections are returned.
+	int k = (analogRead(KEYPIN) - adc_key_in); //gives the button a slight range to allow for a little contact resistance noise
+	if (5 < abs(k)) return btnNONE;  // double checks the keypress. If the two readings are not equal +/-k value after debounce delay, it tries again.
+// my buttons when read are centered at these valies: 0, 144, 329, 504, 741
+// we add approx 50 to those values and check to see if we are close
+	if (adc_key_in > 1000) return btnNONE; // We make this the 1st option for speed reasons since it will be the most likely result
+	if (adc_key_in <50)  return btnRIGHT; 
+	if (adc_key_in <195)  return btnUP; 
+	if (adc_key_in <380)  return btnDOWN;
+	if (adc_key_in <555)  return btnLEFT;
+	if (adc_key_in <790)  return btnSELECT;
+	return btnRIGHT;
+
+}
+//function for buttons to perform different actions
+void dobuttons() {    //updates variables. debounces by only sampling at intervals
+	int key;
+	key = read_LCD_buttons();
+	switch (key) {
+	case btnLEFT:
+		DT = DT - 10; //press left to -10
+		delay(500);
+		break;
+	case btnRIGHT: 
+		DT = DT + 10; //press right to +10
+		delay(500);
+		break;
+	case btnUP:
+		DT = DT + 0.5; //press up to +0.5
+		delay(500);
+		break;
+	case btnDOWN:
+		DT = DT - 0.5; //press down to -0.5
+		delay(500);
+		break;
+	case btnSELECT:
+		DT = DT + 10;
+		delay(500);
+		break;
+	case btnNONE:
+		DT = DT + 10;
+		delay(500);
+		break;
+
+	}
+} 
+void loop() {
+	//1.buttons to input DT
+	int key = read_LCD_buttons();//read keys
+	lastkey = key;            //save for next
+	unsigned int t;
+	if ((key>0) && (lastkey == 0)) {   //if key pressed
+		t0 = millis();               //record when button pressed
+		dobuttons();
+		//act once straight away
+
+	}
+	if ((key>0) && (lastkey == key)) {  //if button is still held pressed
+		if (millis() - t0>400) {
+			t0 = t0 + 200;
+			dobuttons();
+		}
+
+	};//repeat after delay if held down
+
+	  //2.LCD to display DT
+	lcd1602.clear();
+	lcd1602.setCursor(0, 0);
+	lcd1602.print("DT:");//content for first line 
+	lcd1602.print(DT);//print out DT in first line
+	  //3.read temperature
+	sensorValue = analogRead(A1); //get temperature by capture voltage value from A1 pin
+	CT = (4.096E-08)*pow(sensorValue, 3) - (6.6536E-05)*pow(sensorValue, 2) + 0.077292*sensorValue - 6.4016;//relationship between sensorvalueA1 and current temperature
+	/*Serial.print("CT = ");
+	Serial.println(CT, 4);//print CT on serial monitor
+
+	//4.LCD display CT
+	lcd1602.setCursor(0, 1);//put cursor on second line
+	lcd1602.print("CT:");//display CT on second line
+	lcd1602.print(CT, 2);
+
+
+	//5.H-Bridge control 
+	if ((-0.5)<(CT - DT) && (CT - DT)<0.5) {
+
+		digitalWrite(3, LOW);
+
+		digitalWrite(11, LOW);
+		Serial.print("don’t need to cool or heat");//h-bridge off
+	}
+	if (CT>0.5 + DT)//need cooling
+	{
+		A = (int)(CT - DT + 0.5); //rounded up temperature between DT and CT 
+		C = (int)(fabs(DT - 25));//compute absolute value between DT and 25 
+		D = (int)((-0.244)*pow(C, 2) + 10.311*C + 11.261);//relationship between pwm output and(DT- 25) 
+Serial.print("cooling");
+	}
+	switch (A) {//case for different DT-CT
+	case 1:
+		Serial.print("1c");
+		analogWrite(3, D); //pwm output when DT-CT is small
+		delay(500);
+		break;
+	case 2:
+	case 3:
+	case 4:
+	case 5:
+		Serial.print("2-5c");
+		analogWrite(3, D + 20); //pwm output when DT-CT 2-5
+		delay(500);
+		break;
+
+	case 6:
+	case 7:
+	case 8:
+	case 9:
+	case 10:
+		Serial.print("6-10c");
+		analogWrite(3, D + 60);
+		delay(500);
+		break;
+
+	case 11:
+	case 12:
+	case 13:
+	case 14:
+	case 15:
+		Serial.print("11-15c");
+		analogWrite(3, D + 80);
+		delay(500);
+		break;
+
+	case 16:
+	case 17:
+	case 18:
+	case 19:
+	case 20:
+		Serial.print("16-20c");
+		analogWrite(3, D + 100);
+		delay(500);
+		break;
+
+
+	case 21:
+	case 22:
+	case 23:
+	case 24:
+	case 25:
+		analogWrite(3, D + 100);
+		Serial.print("21-25c");
+		delay(500);
+		break;
+
+	case 26:
+	case 27:
+	case 28:
+	case 29:
+	case 30:
+		analogWrite(3, 220); //when DT-CT large use full speed to cool down quickly
+		Serial.print("26-30c");
+		delay(500);
+		break;
+
+	case 31:
+	case 32:
+	case 33:
+	case 34:
+	case 35:
+		analogWrite(3, 220);
+		Serial.print("31-35c");
+		delay(500);
+		break;
+
+	case 36:
+	case 37:
+	case 38:
+	case 39:
+	case 40:
+		analogWrite(3, 220);
+		Serial.print("36-40c");
+		delay(500);
+		break;
+	}
+	if (DT>0.5 + CT)//need heating
+	{
+		B = (int)(DT - CT + 0.5); //rounded up temperature between DT and CT 
+		E = (int)(fabs(DT - 25)); //compute absolute value between DT and 25
+		F = (int)((-0.244)*pow(E, 2) + 10.311*E + 11.261); //relationship between pwm output and(DT- 25)
+		Serial.print("heating");
+	}
+	switch (B) {//case for different DT-CT
+	case 1:
+		Serial.print("1h");
+		analogWrite(11, F); //pwm output when DT-CT is small
+		delay(500);
+		break;
+
+	case 2:
+	case 3:
+	case 4:
+	case 5:
+		Serial.print("2-5h");
+		analogWrite(11, F + 20);
+		delay(500);
+		break;
+
+	case 6:
+	case 7:
+	case 8:
+	case 9:
+	case 10:
+		Serial.print("6-10h");
+		analogWrite(11, F + 60);
+		delay(500);
+		break;
+
+	case 11:
+	case 12:
+	case 13:
+	case 14:
+	case 15:
+		Serial.print("11-15h");
+		analogWrite(11, F + 80);
+		delay(500);
+		break;
+
+	case 16:
+	case 17:
+	case 18:
+	case 19:
+	case 20:
+		Serial.print("16-20h");
+		analogWrite(11, F + 100);
+		delay(500);
+		break;
+
+
+	case 21:
+	case 22:
+	case 23:
+	case 24:
+	case 25:
+		analogWrite(11, F + 100);
+		Serial.print("21-25h");
+		delay(500);
+		break;
+
+	case 26:
+	case 27:
+	case 28:
+	case 29:
+	case 30:
+		analogWrite(11, 220); //when DT-CT large use full speed to heat up quickly
+		Serial.print("26-30h");
+		delay(500);
+		break;
+
+	case 31:
+	case 32:
+	case 33:
+	case 34:
+	case 35:
+		analogWrite(11, 220);
+		Serial.print("31-35h");
+		delay(500);
+		break;
+
+	case 36:
+	case 37:
+	case 38:
+	case 39:
+	case 40:
+		analogWrite(11, 220);
+		Serial.print("36-40h");
+		delay(500);
+		break;
+	}
+
+}
+
